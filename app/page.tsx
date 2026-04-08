@@ -1,65 +1,170 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useEffect, useState } from 'react'
+
+type Customer = {
+  id: string
+  name: string
+  phone: string
+  qb_customer_id: string
+  texted_at: string | null
+  created_at: string
+}
+
+export default function Dashboard() {
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [isConnected, setIsConnected] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadData()
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('connected') === 'true') {
+      setResult('QuickBooks connected successfully!')
+      window.history.replaceState({}, '', '/')
+    } else if (params.get('error')) {
+      setResult('Failed to connect QuickBooks. Please try again.')
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
+
+  async function loadData() {
+    setLoading(true)
+    const [customersRes, settingsRes] = await Promise.all([
+      fetch('/api/customers'),
+      fetch('/api/settings'),
+    ])
+    const customersData = await customersRes.json()
+    const settingsData = await settingsRes.json()
+    setCustomers(Array.isArray(customersData) ? customersData : [])
+    setIsConnected(settingsData.isConnected || false)
+    setLoading(false)
+  }
+
+  async function handleSendTexts() {
+    setSending(true)
+    setResult(null)
+    try {
+      const res = await fetch('/api/send-texts', { method: 'POST' })
+      const data = await res.json()
+      if (data.error) {
+        setResult(`Error: ${data.error}`)
+      } else {
+        setResult(`Done! Sent ${data.sent} text(s) out of ${data.total} recent customer(s).`)
+        loadData()
+      }
+    } catch {
+      setResult('Something went wrong. Check the console.')
+    }
+    setSending(false)
+  }
+
+  const texted = customers.filter(c => c.texted_at)
+  const pending = customers.filter(c => !c.texted_at)
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="min-h-screen bg-gray-950 text-white">
+      <div className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">EasyReview</h1>
+          <p className="text-sm text-gray-400">Lockeford Garage — Review Automation</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-full ${isConnected ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} />
+            {isConnected ? 'QuickBooks Connected' : 'QuickBooks Not Connected'}
+          </div>
+          <a
+            href="/api/auth/quickbooks"
+            className="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition"
+          >
+            {isConnected ? 'Reconnect QBO' : 'Connect QuickBooks'}
+          </a>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div className="text-3xl font-bold">{customers.length}</div>
+            <div className="text-sm text-gray-400 mt-1">Total Customers</div>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div className="text-3xl font-bold text-green-400">{texted.length}</div>
+            <div className="text-sm text-gray-400 mt-1">Texts Sent</div>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div className="text-3xl font-bold text-yellow-400">{pending.length}</div>
+            <div className="text-sm text-gray-400 mt-1">Pending</div>
+          </div>
+        </div>
+
+        <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
+          <h2 className="font-semibold mb-1">Send Review Requests</h2>
+          <p className="text-sm text-gray-400 mb-4">
+            Pulls customers from the last 7 days in QuickBooks and texts anyone who hasn&apos;t been contacted yet.
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={handleSendTexts}
+            disabled={sending || !isConnected}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2 rounded-lg text-sm font-medium transition"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            {sending ? 'Sending...' : 'Run Now'}
+          </button>
+          {!isConnected && (
+            <p className="text-xs text-red-400 mt-2">Connect QuickBooks first.</p>
+          )}
+          {result && (
+            <div className={`mt-4 text-sm px-4 py-3 rounded-lg ${result.startsWith('Error') ? 'bg-red-900/40 text-red-300' : 'bg-green-900/40 text-green-300'}`}>
+              {result}
+            </div>
+          )}
         </div>
-      </main>
+
+        <div className="bg-gray-900 rounded-xl border border-gray-800">
+          <div className="px-6 py-4 border-b border-gray-800">
+            <h2 className="font-semibold">Customer Log</h2>
+          </div>
+          {loading ? (
+            <div className="px-6 py-8 text-gray-500 text-sm">Loading...</div>
+          ) : customers.length === 0 ? (
+            <div className="px-6 py-8 text-gray-500 text-sm">
+              No customers yet. Connect QuickBooks and click Run Now.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-gray-400 text-xs uppercase">
+                  <th className="px-6 py-3 text-left">Name</th>
+                  <th className="px-6 py-3 text-left">Phone</th>
+                  <th className="px-6 py-3 text-left">Status</th>
+                  <th className="px-6 py-3 text-left">Texted At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customers.map(c => (
+                  <tr key={c.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                    <td className="px-6 py-3">{c.name}</td>
+                    <td className="px-6 py-3 text-gray-400">{c.phone}</td>
+                    <td className="px-6 py-3">
+                      {c.texted_at ? (
+                        <span className="bg-green-900/50 text-green-400 text-xs px-2 py-1 rounded-full">Sent</span>
+                      ) : (
+                        <span className="bg-yellow-900/50 text-yellow-400 text-xs px-2 py-1 rounded-full">Pending</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3 text-gray-400">
+                      {c.texted_at ? new Date(c.texted_at).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
-  );
+  )
 }
