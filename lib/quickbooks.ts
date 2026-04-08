@@ -104,7 +104,7 @@ export async function getRecentCustomers(daysBack = 7) {
 }
 
 async function fetchCustomer(
-  oauthClient: OAuthClient,
+  oauthClient: ReturnType<typeof getOAuthClient>,
   baseUrl: string,
   realmId: string,
   customerId: string
