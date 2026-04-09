@@ -15,7 +15,7 @@ export async function POST() {
     const recentCustomers = await getRecentCustomers(7)
 
     if (recentCustomers.length === 0) {
-      return NextResponse.json({ message: 'No new customers found in the last 7 days', sent: 0 })
+      return NextResponse.json({ message: 'No new customers found in the last 7 days', sent: 0, total: 0 })
     }
 
     let sent = 0

@@ -52,7 +52,10 @@ export default function Dashboard() {
       if (data.error) {
         setResult(`Error: ${data.error}`)
       } else {
-        setResult(`Done! Sent ${data.sent} text(s) out of ${data.total} recent customer(s).`)
+        const details = data.results?.map((r: {name: string, status: string, error?: string}) =>
+          `${r.name}: ${r.status}${r.error ? ` (${r.error})` : ''}`
+        ).join(' | ') || ''
+        setResult(`Done! Sent ${data.sent} text(s) out of ${data.total} recent customer(s). ${details}`)
         loadData()
       }
     } catch {
