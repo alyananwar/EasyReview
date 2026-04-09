@@ -16,13 +16,18 @@ export async function getStoredTokens() {
     .select('value')
     .eq('key', 'qb_tokens')
     .single()
-  return data?.value || null
+  if (!data?.value) return null
+  try {
+    return JSON.parse(data.value)
+  } catch {
+    return null
+  }
 }
 
 export async function saveTokens(tokenData: Record<string, unknown>) {
   await supabaseAdmin
     .from('settings')
-    .upsert({ key: 'qb_tokens', value: tokenData }, { onConflict: 'key' })
+    .upsert({ key: 'qb_tokens', value: JSON.stringify(tokenData) }, { onConflict: 'key' })
 }
 
 export async function getRealmId(): Promise<string | null> {
@@ -46,11 +51,13 @@ export async function getRecentCustomers(daysBack = 7) {
   const oauthClient = getOAuthClient()
   oauthClient.setToken(tokens)
 
-  // Refresh token if needed
-  if (oauthClient.isAccessTokenValid() === false) {
+  // Always refresh — access tokens expire after 1 hour
+  try {
     const refreshed = await oauthClient.refresh()
     await saveTokens(refreshed.getJson())
     oauthClient.setToken(refreshed.getJson())
+  } catch (err) {
+    console.warn('Token refresh failed, trying with existing token:', err)
   }
 
   const since = new Date()
