@@ -1,1 +1,1 @@
-declare module 'intuit-oauth';
+declare module "intuit-oauth";

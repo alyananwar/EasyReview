@@ -1,11 +1,8 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Client for browser use
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
-// Admin client for server-side use (bypasses row level security)
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
+// Admin client for server-side use only (bypasses row level security).
+// All database access goes through API routes — there is no browser client.
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);

@@ -1,130 +1,159 @@
-import OAuthClient from 'intuit-oauth'
-import { supabaseAdmin } from './supabase'
+import OAuthClient from "intuit-oauth";
+import { supabaseAdmin } from "./supabase";
+
+export interface QbCustomer {
+  name: string;
+  phone: string;
+  qb_customer_id: string;
+}
 
 export function getOAuthClient() {
   return new OAuthClient({
     clientId: process.env.QUICKBOOKS_CLIENT_ID!,
     clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET!,
-    environment: process.env.QUICKBOOKS_ENV as 'sandbox' | 'production' || 'sandbox',
+    environment:
+      (process.env.QUICKBOOKS_ENV as "sandbox" | "production") || "sandbox",
     redirectUri: process.env.QUICKBOOKS_REDIRECT_URI!,
-  })
+  });
 }
 
 export async function getStoredTokens() {
   const { data } = await supabaseAdmin
-    .from('settings')
-    .select('value')
-    .eq('key', 'qb_tokens')
-    .single()
-  if (!data?.value) return null
+    .from("settings")
+    .select("value")
+    .eq("key", "qb_tokens")
+    .maybeSingle();
+  if (!data?.value) return null;
   try {
-    return JSON.parse(data.value)
+    return JSON.parse(data.value);
   } catch {
-    return null
+    return null;
   }
 }
 
 export async function saveTokens(tokenData: Record<string, unknown>) {
   await supabaseAdmin
-    .from('settings')
-    .upsert({ key: 'qb_tokens', value: JSON.stringify(tokenData) }, { onConflict: 'key' })
+    .from("settings")
+    .upsert(
+      { key: "qb_tokens", value: JSON.stringify(tokenData) },
+      { onConflict: "key" },
+    );
 }
 
 export async function getRealmId(): Promise<string | null> {
   const { data } = await supabaseAdmin
-    .from('settings')
-    .select('value')
-    .eq('key', 'qb_realm_id')
-    .single()
-  return data?.value || null
+    .from("settings")
+    .select("value")
+    .eq("key", "qb_realm_id")
+    .maybeSingle();
+  return data?.value || null;
 }
 
-// Fetch customers who had invoices in the last N days
-export async function getRecentCustomers(daysBack = 7) {
-  const tokens = await getStoredTokens()
-  const realmId = await getRealmId()
+function qbBaseUrl(): string {
+  return process.env.QUICKBOOKS_ENV === "production"
+    ? "https://quickbooks.api.intuit.com"
+    : "https://sandbox-quickbooks.api.intuit.com";
+}
+
+async function qbQuery<T = unknown>(
+  oauthClient: ReturnType<typeof getOAuthClient>,
+  realmId: string,
+  query: string,
+): Promise<T> {
+  const token = oauthClient.getToken();
+  const url = `${qbBaseUrl()}/v3/company/${realmId}/query?query=${encodeURIComponent(
+    query,
+  )}&minorversion=65`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token.access_token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`QuickBooks API error: ${response.status} ${body}`);
+  }
+  return response.json();
+}
+
+// Fetch customers who had invoices in the last N days.
+// Batches the customer detail lookup into a single IN (...) query instead of
+// N sequential fetches.
+export async function getRecentCustomers(daysBack = 7): Promise<QbCustomer[]> {
+  const tokens = await getStoredTokens();
+  const realmId = await getRealmId();
 
   if (!tokens || !realmId) {
-    throw new Error('QuickBooks not connected')
+    throw new Error("QuickBooks not connected");
   }
 
-  const oauthClient = getOAuthClient()
-  oauthClient.setToken(tokens)
+  const oauthClient = getOAuthClient();
+  oauthClient.setToken(tokens);
 
-  // Always refresh — access tokens expire after 1 hour
+  // Access tokens expire hourly — always refresh.
   try {
-    const refreshed = await oauthClient.refresh()
-    await saveTokens(refreshed.getJson())
-    oauthClient.setToken(refreshed.getJson())
+    const refreshed = await oauthClient.refresh();
+    await saveTokens(refreshed.getJson());
+    oauthClient.setToken(refreshed.getJson());
   } catch (err) {
-    console.warn('Token refresh failed, trying with existing token:', err)
+    console.warn("Token refresh failed, trying with existing token:", err);
   }
 
-  const since = new Date()
-  since.setDate(since.getDate() - daysBack)
-  const sinceStr = since.toISOString().split('T')[0]
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+  const sinceStr = since.toISOString().split("T")[0];
 
-  const baseUrl = process.env.QUICKBOOKS_ENV === 'production'
-    ? 'https://quickbooks.api.intuit.com'
-    : 'https://sandbox-quickbooks.api.intuit.com'
+  const invoiceQuery = `SELECT Id, CustomerRef FROM Invoice WHERE TxnDate >= '${sinceStr}' MAXRESULTS 100`;
+  type InvoiceResp = {
+    QueryResponse?: {
+      Invoice?: Array<{ CustomerRef?: { value?: string; name?: string } }>;
+    };
+  };
+  const invoiceData = await qbQuery<InvoiceResp>(
+    oauthClient,
+    realmId,
+    invoiceQuery,
+  );
+  const invoices = invoiceData.QueryResponse?.Invoice ?? [];
 
-  const query = `SELECT * FROM Invoice WHERE TxnDate >= '${sinceStr}' MAXRESULTS 100`
-  const url = `${baseUrl}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`
-
-  const token = oauthClient.getToken()
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      Accept: 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`QuickBooks API error: ${response.status}`)
+  // Collect unique customer IDs with their names from the invoice refs
+  const uniqueIds = new Map<string, string>();
+  for (const inv of invoices) {
+    const id = inv.CustomerRef?.value;
+    if (!id || uniqueIds.has(id)) continue;
+    uniqueIds.set(id, inv.CustomerRef?.name || "Customer");
   }
 
-  const data = await response.json()
-  const invoices = data.QueryResponse?.Invoice || []
+  if (uniqueIds.size === 0) return [];
 
-  // Extract unique customers with phone numbers
-  const customerMap = new Map<string, { name: string; phone: string; qb_customer_id: string }>()
+  // Batch fetch customer details with one IN (...) query
+  const idList = Array.from(uniqueIds.keys())
+    .map((id) => `'${id}'`)
+    .join(",");
+  const customerQuery = `SELECT Id, DisplayName, PrimaryPhone FROM Customer WHERE Id IN (${idList}) MAXRESULTS 100`;
+  type CustResp = {
+    QueryResponse?: {
+      Customer?: Array<{
+        Id?: string;
+        DisplayName?: string;
+        PrimaryPhone?: { FreeFormNumber?: string };
+      }>;
+    };
+  };
+  const custData = await qbQuery<CustResp>(oauthClient, realmId, customerQuery);
+  const customers = custData.QueryResponse?.Customer ?? [];
 
-  for (const invoice of invoices) {
-    const customerId = invoice.CustomerRef?.value
-    const customerName = invoice.CustomerRef?.name || 'Customer'
-    const phone = invoice.BillAddr?.Line1 || null // fallback — we'll fetch customer details
-
-    if (customerId && !customerMap.has(customerId)) {
-      // Fetch full customer record to get phone
-      const customerData = await fetchCustomer(oauthClient, baseUrl, realmId, customerId)
-      if (customerData?.PrimaryPhone?.FreeFormNumber) {
-        customerMap.set(customerId, {
-          name: customerName,
-          phone: customerData.PrimaryPhone.FreeFormNumber,
-          qb_customer_id: customerId,
-        })
-      }
-    }
+  const result: QbCustomer[] = [];
+  for (const c of customers) {
+    const phone = c.PrimaryPhone?.FreeFormNumber;
+    const id = c.Id;
+    if (!id || !phone) continue;
+    result.push({
+      qb_customer_id: id,
+      name: c.DisplayName || uniqueIds.get(id) || "Customer",
+      phone,
+    });
   }
-
-  return Array.from(customerMap.values())
-}
-
-async function fetchCustomer(
-  oauthClient: ReturnType<typeof getOAuthClient>,
-  baseUrl: string,
-  realmId: string,
-  customerId: string
-) {
-  const token = oauthClient.getToken()
-  const url = `${baseUrl}/v3/company/${realmId}/customer/${customerId}?minorversion=65`
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      Accept: 'application/json',
-    },
-  })
-  if (!response.ok) return null
-  const data = await response.json()
-  return data.Customer || null
+  return result;
 }

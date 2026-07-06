@@ -1,0 +1,61 @@
+import { NextRequest, NextResponse } from "next/server";
+import twilio from "twilio";
+import { supabaseAdmin } from "@/lib/supabase";
+import { normalizePhone } from "@/lib/phone";
+
+export const runtime = "nodejs";
+
+const STOP_WORDS = new Set([
+  "STOP",
+  "STOPALL",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+]);
+
+// Twilio sends a POST here when an incoming SMS is received on our number.
+// Configure this URL in the Twilio console under Phone Numbers > Messaging.
+// URL: https://yourapp.vercel.app/api/twilio/webhook
+export async function POST(request: NextRequest) {
+  const authToken = process.env.TWILIO_AUTH_TOKEN ?? "";
+  const twilioSignature = request.headers.get("x-twilio-signature") ?? "";
+
+  // Parse the URL-encoded form body Twilio sends.
+  const text = await request.text();
+  const params: Record<string, string> = Object.fromEntries(
+    new URLSearchParams(text),
+  );
+
+  // Validate the request came from Twilio.
+  const valid = twilio.validateRequest(
+    authToken,
+    twilioSignature,
+    request.url,
+    params,
+  );
+  if (!valid) {
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
+  const body = (params["Body"] ?? "").trim().toUpperCase();
+  const from = params["From"] ?? "";
+
+  if (STOP_WORDS.has(body)) {
+    const phone = normalizePhone(from);
+    if (phone.ok) {
+      await supabaseAdmin
+        .from("opt_outs")
+        .upsert(
+          { phone: phone.tenDigit, reason: "stop_reply" },
+          { onConflict: "phone" },
+        );
+    }
+  }
+
+  // Empty TwiML response — Twilio still handles opt-out at carrier level.
+  return new NextResponse(
+    '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+    { headers: { "Content-Type": "text/xml" } },
+  );
+}
