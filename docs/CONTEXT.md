@@ -1,5 +1,7 @@
 # EasyReview — Full Project Context
 
+> **Historical (2026-10-22):** written for the old Vercel + Supabase setup. EasyReview now runs on the shop PC with SQLite. See `docs/SHOP_PC_SETUP.md` and `README.md` for the current design.
+
 **Date:** 2026-04-30  
 **For:** Senior developer review  
 **Author:** Alyan Anwar

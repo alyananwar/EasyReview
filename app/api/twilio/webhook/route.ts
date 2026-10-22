@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
-import { supabaseAdmin } from "@/lib/supabase";
+import { addOptOut } from "@/lib/db";
 import { normalizePhone } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ const STOP_WORDS = new Set([
 
 // Twilio sends a POST here when an incoming SMS is received on our number.
 // Configure this URL in the Twilio console under Phone Numbers > Messaging.
-// URL: https://yourapp.vercel.app/api/twilio/webhook
+// URL: <PUBLIC_URL>/api/twilio/webhook (the Tailscale Funnel address)
 export async function POST(request: NextRequest) {
   const authToken = process.env.TWILIO_AUTH_TOKEN ?? "";
   const twilioSignature = request.headers.get("x-twilio-signature") ?? "";
@@ -27,11 +27,15 @@ export async function POST(request: NextRequest) {
     new URLSearchParams(text),
   );
 
-  // Validate the request came from Twilio.
+  // Validate the request came from Twilio. Twilio signs the public URL it
+  // called, which is not what the app sees behind the Tailscale proxy.
+  const publicUrl = process.env.PUBLIC_URL
+    ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}${request.nextUrl.pathname}`
+    : request.url;
   const valid = twilio.validateRequest(
     authToken,
     twilioSignature,
-    request.url,
+    publicUrl,
     params,
   );
   if (!valid) {
@@ -44,12 +48,7 @@ export async function POST(request: NextRequest) {
   if (STOP_WORDS.has(body)) {
     const phone = normalizePhone(from);
     if (phone.ok) {
-      await supabaseAdmin
-        .from("opt_outs")
-        .upsert(
-          { phone: phone.tenDigit, reason: "stop_reply" },
-          { onConflict: "phone" },
-        );
+      addOptOut(phone.tenDigit, "stop_reply");
     }
   }
 

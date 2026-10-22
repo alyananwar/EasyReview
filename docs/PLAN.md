@@ -1,5 +1,7 @@
 # EasyReview — Technical Plan v1.0
 
+> **Historical (2026-10-22):** written for the old Vercel + Supabase setup. EasyReview now runs on the shop PC with SQLite. See `docs/SHOP_PC_SETUP.md` and `README.md` for the current design.
+
 **Date:** 2026-04-30  
 **Author:** Alyan Anwar  
 **Status:** Draft — pending senior dev review

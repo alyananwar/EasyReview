@@ -1,5 +1,7 @@
 # EasyReview — Inngest Integration Architecture
 
+> **Historical (2026-10-22):** written for the old Vercel + Supabase setup. EasyReview now runs on the shop PC with SQLite. See `docs/SHOP_PC_SETUP.md` and `README.md` for the current design.
+
 **Status:** Design only — implement when second paying customer signs  
 **Current approach:** `after()` from next/server (interim, sufficient for 1-2 shops)
 

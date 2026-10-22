@@ -1,5 +1,5 @@
 import OAuthClient from "intuit-oauth";
-import { supabaseAdmin } from "./supabase";
+import { getSetting, setSetting } from "./db";
 
 export interface QbCustomer {
   name: string;
@@ -18,35 +18,21 @@ export function getOAuthClient() {
 }
 
 export async function getStoredTokens() {
-  const { data } = await supabaseAdmin
-    .from("settings")
-    .select("value")
-    .eq("key", "qb_tokens")
-    .maybeSingle();
-  if (!data?.value) return null;
+  const value = getSetting("qb_tokens");
+  if (!value) return null;
   try {
-    return JSON.parse(data.value);
+    return JSON.parse(value);
   } catch {
     return null;
   }
 }
 
 export async function saveTokens(tokenData: Record<string, unknown>) {
-  await supabaseAdmin
-    .from("settings")
-    .upsert(
-      { key: "qb_tokens", value: JSON.stringify(tokenData) },
-      { onConflict: "key" },
-    );
+  setSetting("qb_tokens", JSON.stringify(tokenData));
 }
 
 export async function getRealmId(): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from("settings")
-    .select("value")
-    .eq("key", "qb_realm_id")
-    .maybeSingle();
-  return data?.value || null;
+  return getSetting("qb_realm_id") || null;
 }
 
 function qbBaseUrl(): string {
@@ -91,13 +77,18 @@ export async function getRecentCustomers(daysBack = 7): Promise<QbCustomer[]> {
   const oauthClient = getOAuthClient();
   oauthClient.setToken(tokens);
 
-  // Access tokens expire hourly — always refresh.
+  // Access tokens expire hourly and runs are hours apart, so always refresh.
+  // If refresh fails the stored token is already dead: fail loudly so the
+  // run is marked failed and the admin gets an alert text.
   try {
     const refreshed = await oauthClient.refresh();
     await saveTokens(refreshed.getJson());
     oauthClient.setToken(refreshed.getJson());
   } catch (err) {
-    console.warn("Token refresh failed, trying with existing token:", err);
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `QuickBooks token refresh failed (${detail}). Reconnect QuickBooks from the dashboard.`,
+    );
   }
 
   const since = new Date();

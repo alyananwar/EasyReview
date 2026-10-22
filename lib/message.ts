@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "./supabase";
+import { getSetting } from "./db";
 
 // SMS copy for review requests. The template is editable per shop from the
 // dashboard (stored in settings.message_template); env vars supply branding.
@@ -7,7 +7,7 @@ import { supabaseAdmin } from "./supabase";
 
 export const DEFAULT_TEMPLATE =
   "Hi {first_name}! This is {business_name}. We hope your visit went well! " +
-  "We'd really appreciate it if you could leave us a quick review — it helps us out a lot. {review_link}";
+  "We'd really appreciate it if you could leave us a quick review. It helps us out a lot. {review_link}";
 
 // A2P 10DLC compliance: every outbound message must include opt-out language.
 export const OPT_OUT_SUFFIX = "Reply STOP to opt out.";
@@ -21,8 +21,21 @@ export interface MessageVars {
   reviewLink: string;
 }
 
+// Phones auto-insert smart quotes and dashes. Any of them forces the whole SMS
+// into UCS-2 encoding (70 chars/segment instead of 160), so swap them for ASCII.
+const SMART_PUNCTUATION: Array<[RegExp, string]> = [
+  [/[\u2018\u2019]/g, "'"],
+  [/[\u201C\u201D]/g, '"'],
+  [/[\u2013\u2014]/g, "-"],
+  [/\u2026/g, "..."],
+];
+
 export function renderMessage(template: string, vars: MessageVars): string {
-  const body = template
+  const ascii = SMART_PUNCTUATION.reduce(
+    (t, [re, sub]) => t.replace(re, sub),
+    template,
+  );
+  const body = ascii
     .replaceAll("{first_name}", vars.firstName)
     .replaceAll("{business_name}", vars.businessName)
     .replaceAll("{review_link}", vars.reviewLink)
@@ -57,11 +70,6 @@ export function validateTemplate(template: string): TemplateValidation {
 
 // Stored template, or the default when unset/blank.
 export async function getMessageTemplate(): Promise<string> {
-  const { data } = await supabaseAdmin
-    .from("settings")
-    .select("value")
-    .eq("key", "message_template")
-    .maybeSingle();
-  const stored = data?.value?.trim();
+  const stored = getSetting("message_template")?.trim();
   return stored || DEFAULT_TEMPLATE;
 }

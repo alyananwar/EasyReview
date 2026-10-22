@@ -58,6 +58,7 @@ export type Settings = {
   quietHoursStart: string;
   quietHoursEnd: string;
   lastRunAt: string | null;
+  runHours: number[];
   reviewLinkOk: boolean;
   smsNumber: string | null;
   businessName: string | null;

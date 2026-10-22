@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getDb, getSettings, setSetting } from "@/lib/db";
 import { DEFAULT_TEMPLATE, validateTemplate } from "@/lib/message";
+import { RUN_HOURS } from "@/lib/schedule";
 
 const SETTINGS_KEYS = [
   "message_template",
@@ -24,21 +25,12 @@ function isValidTimezone(tz: string): boolean {
 }
 
 export async function GET() {
-  const { data } = await supabaseAdmin
-    .from("settings")
-    .select("key, value")
-    .in("key", [...SETTINGS_KEYS]);
-
-  const s: Record<string, string> = {};
-  for (const row of data ?? []) s[row.key] = row.value;
-
-  const { data: lastRun } = await supabaseAdmin
-    .from("runs")
-    .select("started_at, status")
-    .eq("status", "completed")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const s = getSettings(SETTINGS_KEYS);
+  const lastRun = getDb()
+    .prepare(
+      "SELECT started_at FROM runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1",
+    )
+    .get() as { started_at: string } | undefined;
 
   const reviewLink = process.env.REVIEW_LINK ?? "";
 
@@ -52,6 +44,7 @@ export async function GET() {
     quietHoursStart: s["quiet_hours_start"] ?? "20:00",
     quietHoursEnd: s["quiet_hours_end"] ?? "08:00",
     lastRunAt: lastRun?.started_at ?? null,
+    runHours: RUN_HOURS,
     // Server-side env status for the Setup panel (never exposes secrets).
     reviewLinkOk: !!reviewLink && !reviewLink.includes("YOUR_REVIEW_LINK"),
     smsNumber: process.env.TWILIO_FROM_NUMBER ?? null,
@@ -117,14 +110,7 @@ export async function POST(request: NextRequest) {
     updates.push({ key: "quiet_hours_end", value: v });
   }
 
-  for (const { key, value } of updates) {
-    const { error } = await supabaseAdmin
-      .from("settings")
-      .upsert({ key, value }, { onConflict: "key" });
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-  }
+  for (const { key, value } of updates) setSetting(key, value);
 
   return NextResponse.json({ ok: true });
 }

@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "./supabase";
+import { optedOutPhones, recentlyTextedIds, sentInLast24h } from "./db";
 import { getRecentCustomers, QbCustomer } from "./quickbooks";
 import { normalizePhone } from "./phone";
 import { buildMessage } from "./batch";
@@ -28,7 +28,8 @@ export interface PreviewOptions {
 export async function previewBatch(
   opts: PreviewOptions = {},
 ): Promise<PreviewResult> {
-  const dailyCap = opts.dailyCap ?? DAILY_CAP;
+  // Room left under the rolling 24h cap (see processBatch).
+  const dailyCap = Math.max(0, (opts.dailyCap ?? DAILY_CAP) - sentInLast24h());
   const daysBack = opts.daysBack ?? DAYS_BACK;
   const fetchCustomers = opts.fetchCustomers ?? getRecentCustomers;
   const fetchTemplate = opts.fetchTemplate ?? getMessageTemplate;
@@ -49,22 +50,8 @@ export async function previewBatch(
     };
   }
 
-  const ids = customers.map((c) => c.qb_customer_id);
-  const { data: existing } = await supabaseAdmin
-    .from("customers")
-    .select("qb_customer_id, texted_at, next_eligible_at")
-    .in("qb_customer_id", ids);
-
-  const now = new Date();
-  const alreadyTextedSet = new Set(
-    (existing ?? [])
-      .filter((r) => {
-        if (!r.texted_at) return false;
-        if (r.next_eligible_at && new Date(r.next_eligible_at) <= now)
-          return false;
-        return true;
-      })
-      .map((r) => r.qb_customer_id),
+  const alreadyTextedSet = recentlyTextedIds(
+    customers.map((c) => c.qb_customer_id),
   );
 
   type Classified = {
@@ -85,14 +72,7 @@ export async function previewBatch(
     .filter((p) => !p.skipReason)
     .map((p) => p.tenDigit!);
 
-  const optedOutSet = new Set<string>();
-  if (validPhones.length > 0) {
-    const { data: optOuts } = await supabaseAdmin
-      .from("opt_outs")
-      .select("phone")
-      .in("phone", validPhones);
-    (optOuts ?? []).forEach((r) => optedOutSet.add(r.phone));
-  }
+  const optedOutSet = optedOutPhones(validPhones);
 
   for (const p of classified) {
     if (!p.skipReason && p.tenDigit && optedOutSet.has(p.tenDigit)) {

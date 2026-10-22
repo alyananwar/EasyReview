@@ -1,16 +1,9 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getDb } from "@/lib/db";
 
 export async function GET() {
-  const { data, error } = await supabaseAdmin
-    .from("customers")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(100);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json(data);
+  const rows = getDb()
+    .prepare("SELECT * FROM customers ORDER BY created_at DESC LIMIT 100")
+    .all();
+  return NextResponse.json(rows);
 }

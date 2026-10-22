@@ -1,20 +1,15 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 // Recent runs for the history panel.
 export async function GET() {
-  const { data, error } = await supabaseAdmin
-    .from("runs")
-    .select(
-      "id, status, source, started_at, finished_at, total, sent, skipped, failed, error",
+  const rows = getDb()
+    .prepare(
+      `SELECT id, status, source, started_at, finished_at, total, sent, skipped, failed, error
+       FROM runs ORDER BY started_at DESC LIMIT 25`,
     )
-    .order("started_at", { ascending: false })
-    .limit(25);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  return NextResponse.json(data);
+    .all();
+  return NextResponse.json(rows);
 }

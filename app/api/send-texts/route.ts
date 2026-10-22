@@ -1,19 +1,13 @@
 import { after } from "next/server";
 import { NextResponse } from "next/server";
 import { createRun, processBatch, cleanStuckRuns } from "@/lib/batch";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getSetting } from "@/lib/db";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 export async function POST() {
   // Check automation is enabled before creating a run.
-  const { data: autoRow } = await supabaseAdmin
-    .from("settings")
-    .select("value")
-    .eq("key", "automation_enabled")
-    .maybeSingle();
-  if (autoRow?.value === "false") {
+  if (getSetting("automation_enabled") === "false") {
     return NextResponse.json(
       { error: "Automation is paused. Enable it in the dashboard first." },
       { status: 409 },

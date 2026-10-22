@@ -7,24 +7,27 @@ SMS review automation for local businesses. EasyReview pulls recent customers fr
 ## How it works
 
 ```
-Vercel Cron (daily 10am PT)
+Scheduler in the server process (9, 11, 13, 15, 17 shop time)
         │
         ▼
-/api/cron ──► lib/batch.ts ──► QuickBooks: invoices from last N days
-        │            │
-        │            ├─► skip: already texted, opted out, invalid phone, over cap
-        │            └─► Twilio SMS ──► customer
+lib/schedule.ts ──► lib/batch.ts ──► QuickBooks: invoices from last N days
+                         │
+                         ├─► skip: already texted, opted out, invalid phone, over cap
+                         └─► Twilio SMS ──► customer
         │
         ▼
-Supabase: runs, customers, opt_outs, message_attempts, settings
+SQLite (data/easyreview.db): runs, customers, opt_outs, message_attempts, settings
         │
         ▼
-Dashboard (/) — stats, run history, customer log, message editor
+Dashboard (/): stats, run history, customer log, message editor, Run Now
 ```
 
-- **Stack:** Next.js 16 (App Router), TypeScript, Tailwind v4, Supabase (Postgres), Twilio, QuickBooks Online API, Vercel
-- **Single tenant:** one deployment + one Supabase project per shop (multi-tenant planned at 10+ shops, see `docs/INNGEST_ARCHITECTURE.md` for the durable-jobs design)
-- **Auth:** password-protected dashboard with signed HttpOnly session cookies; cron protected by a bearer secret; Twilio webhook validated by signature
+- **Stack:** Next.js 16 (App Router), TypeScript, Tailwind v4, Node 24 built-in SQLite (`node:sqlite`), Twilio, QuickBooks Online API
+- **Hosting:** runs on the shop's own Windows PC, reached over Tailscale. Setup guide: `docs/SHOP_PC_SETUP.md`
+- **Single tenant:** one PC and one database file per shop
+- **Auth:** dashboard is tailnet-only (`TAILNET_ONLY`) plus a password with signed HttpOnly cookies; `/api/cron` and `/api/health` take a bearer secret; the Twilio webhook is signature-validated
+- **Alerts:** texts `ALERT_PHONE` when a run fails or QuickBooks disconnects (once per outage)
+- **Backups:** daily `VACUUM INTO` copy in `data/backups/`, 14 days kept
 
 ## Quick start (local dev)
 
@@ -32,29 +35,19 @@ Dashboard (/) — stats, run history, customer log, message editor
 git clone https://github.com/alyananwar/EasyReview.git
 cd EasyReview
 npm install
-cp .env.example .env.local   # fill in every value — see the comments in the file
+cp .env.example .env.local   # fill in values, see the comments in the file
 npm run dev                   # http://localhost:3000
 ```
 
-You need accounts for Supabase, Twilio, and Intuit Developer. `docs/SETUP_ACCOUNTS.md` walks through creating each one step by step.
-
-### Database setup
-
-In the Supabase SQL editor, run these once, in order:
-
-1. `supabase-schema.sql` (base tables)
-2. `supabase/migrations/001_runs.sql`
-3. `supabase/migrations/002_production_fixes.sql`
-4. `supabase/migrations/003_message_attempts.sql`
-5. `supabase/migrations/004_enable_rls.sql`
+Needs Node 24+. The database file is created automatically on first use. The scheduler stays off in `npm run dev` unless `SCHEDULER_ENABLED=true`. Twilio and Intuit account setup is in `docs/SETUP_ACCOUNTS.md`.
 
 ### Verify your setup
 
 ```bash
-npx ts-node scripts/verify-setup.ts
+npm run verify
 ```
 
-Checks every env var, Supabase connectivity, and Twilio credentials before you deploy.
+Checks every env var, that the QuickBooks redirect URI matches `PUBLIC_URL`, and that the Twilio credentials and number work.
 
 ## Commands
 
@@ -64,6 +57,7 @@ Checks every env var, Supabase connectivity, and Twilio credentials before you d
 | `npm run build` | Production build             |
 | `npm test`      | Run the Vitest suite         |
 | `npm run lint`  | ESLint                       |
+| `npm run verify` | Check `.env.local` and Twilio credentials |
 
 ## Project layout
 
@@ -75,57 +69,56 @@ app/
   privacy/ terms/     Public legal pages (required for A2P 10DLC)
   api/
     auth/             Dashboard login/logout + QuickBooks OAuth
-    cron/             Daily trigger (Vercel Cron, bearer secret)
+    cron/             Manual trigger for the scheduled run (bearer secret, used over SSH)
     send-texts/       Manual "Run Now" trigger
     preview/          Dry-run: who would get texted, sample message
     runs/, customers/, opt-outs/, settings/   Dashboard data
     twilio/webhook/   Incoming SMS (STOP replies), signature-validated
     health/           Deployment health check (session or CRON_SECRET bearer)
+instrumentation.ts    Starts the scheduler when the server boots
 lib/
-  batch.ts            Core send loop: dedupe, caps, jitter, retext window
+  db.ts               SQLite schema, helpers, daily backup
+  schedule.ts         Run hours, quiet hours, scheduler loop
+  batch.ts            Core send loop: dedupe, caps, jitter, retext window, alerts
   message.ts          Template rendering + validation (editable from dashboard)
   quickbooks.ts       QB OAuth tokens + invoice/customer queries
   sms.ts              Twilio sender
   phone.ts            US phone normalization
   auth.ts             Signed session cookies
   preview.ts          Dry-run classification
-proxy.ts              Route protection (redirects to /login)
-supabase/migrations/  SQL migrations (run in order)
-scripts/verify-setup.ts   Pre-deploy environment check
+proxy.ts              Route protection (tailnet guard, redirects to /login)
+scripts/verify-setup.ts   Environment check (npm run verify)
+scripts/windows/      Shop PC: install.ps1 (one time), run.ps1 (keeps it running), deploy.ps1
 docs/                 Deployment, account setup, pricing, architecture
 ```
 
 ## Deploying
 
-Full guide in `docs/DEPLOYMENT.md`. Short version:
+Full guide in `docs/SHOP_PC_SETUP.md`. After the one-time setup, shipping a change is:
 
-1. Set every env var from `.env.example` in Vercel (Production scope)
-2. `npx vercel --prod` (Pro plan required for cron)
-3. Run the DB migrations in Supabase
-4. Point the Twilio webhook at `https://yourapp.vercel.app/api/twilio/webhook`
-5. Set the QuickBooks redirect URI to `https://yourapp.vercel.app/api/auth/quickbooks/callback`
-6. Open the dashboard, log in, connect QuickBooks, send a test preview
+```bash
+git push
+ssh shop-pc deploy
+```
 
 External approvals to start early (they take weeks, not hours):
 
-- **Twilio A2P 10DLC** brand + campaign registration (1–3 weeks) — required for US carrier delivery
-- **Intuit production app** review (1–2 weeks) — sandbox works meanwhile
+- **Twilio A2P 10DLC** brand + campaign registration (1 to 3 weeks), required for US carrier delivery
+- **Intuit production app** review (1 to 2 weeks); the sandbox works meanwhile
 
 ## Compliance notes
 
 - Every message ends with opt-out language; the renderer appends "Reply STOP to opt out." if the template doesn't include it
-- STOP replies are recorded via the Twilio webhook and checked before every send
+- STOP replies are recorded via the Twilio webhook (and from Twilio error 21610) and checked before every send
 - Customers are texted at most once per `RETEXT_DAYS` (default 90)
-- Quiet hours (default 8pm–8am shop time) block cron sends
+- Quiet hours (default 8pm to 8am shop time) block scheduled sends
 - `DAILY_CAP` (default 40) limits volume per run
 
 ## Docs
 
-| Doc                            | Contents                                                             |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `docs/SETUP_ACCOUNTS.md`       | Step-by-step account creation: Twilio, A2P, Supabase, Intuit, Vercel |
-| `docs/DEPLOYMENT.md`           | Production deploy + per-shop onboarding checklist                    |
-| `docs/CONTEXT.md`              | Full architecture context and decision history                       |
-| `docs/PRICING.md`              | Pricing strategy ($49/mo Solo) and unit economics                    |
-| `docs/PLAN.md`                 | Original phase 1/2 technical plan                                    |
-| `docs/INNGEST_ARCHITECTURE.md` | Durable job design for when scale demands it                         |
+| Doc                            | Contents                                                     |
+| ------------------------------ | ------------------------------------------------------------ |
+| `docs/SHOP_PC_SETUP.md`        | Shop PC install, SSH, Tailscale, day-to-day commands         |
+| `docs/SETUP_ACCOUNTS.md`       | Twilio, A2P 10DLC, and Intuit production app setup           |
+| `docs/PRICING.md`              | Pricing strategy ($49/mo Solo) and unit economics            |
+| `docs/CONTEXT.md`, `docs/PLAN.md`, `docs/INNGEST_ARCHITECTURE.md` | Older Vercel + Supabase design notes, kept for history |

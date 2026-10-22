@@ -1,17 +1,15 @@
 /**
- * Run before first deploy to verify all credentials are wired correctly.
- * Usage: npx ts-node scripts/verify-setup.ts
+ * Run on the shop PC before going live to verify credentials are wired correctly.
+ * Usage: npm run verify
  */
 
-import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
 
 const REQUIRED_VARS = [
   "TWILIO_ACCOUNT_SID",
   "TWILIO_AUTH_TOKEN",
   "TWILIO_FROM_NUMBER",
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
+  "PUBLIC_URL",
   "QUICKBOOKS_CLIENT_ID",
   "QUICKBOOKS_CLIENT_SECRET",
   "QUICKBOOKS_REDIRECT_URI",
@@ -48,18 +46,24 @@ if (reviewLink.includes("YOUR_REVIEW_LINK")) {
   pass("review_link_not_placeholder");
 }
 
-// ── 3. Supabase connectivity ───────────────────────────────────────────────
-async function checkSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return fail("supabase_connectivity", "missing env vars");
-
-  const client = createClient(url, key);
-  const { error } = await client.from("settings").select("key").limit(1);
-  if (error) {
-    fail("supabase_connectivity", error.message);
+// ── 3. QuickBooks redirect lives on the public HTTPS URL ──────────────────
+// Intuit production apps only accept https redirect URIs (no localhost, no IPs).
+{
+  const pub = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
+  const redirect = process.env.QUICKBOOKS_REDIRECT_URI ?? "";
+  const expected = `${pub}/api/auth/quickbooks/callback`;
+  if (!pub.startsWith("https://")) {
+    fail(
+      "public_url_https",
+      "PUBLIC_URL must be the https://<pc>.<tailnet>.ts.net address",
+    );
+  } else if (redirect !== expected) {
+    fail(
+      "qb_redirect_uri",
+      `expected ${expected}, got ${redirect || "(empty)"}`,
+    );
   } else {
-    pass("supabase_connectivity");
+    pass("qb_redirect_uri", redirect);
   }
 }
 
@@ -112,7 +116,6 @@ async function checkTwilioNumber() {
 async function main() {
   console.log("\nEasyReview Setup Verification\n" + "─".repeat(40));
 
-  await checkSupabase();
   await checkTwilio();
   await checkTwilioNumber();
 
@@ -135,7 +138,7 @@ async function main() {
     }
     process.exit(1);
   } else {
-    console.log("\nAll checks passed. Ready to deploy.");
+    console.log("\nAll checks passed.");
     process.exit(0);
   }
 }

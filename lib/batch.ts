@@ -1,4 +1,13 @@
-import { supabaseAdmin } from "./supabase";
+import {
+  getDb,
+  getSetting,
+  newId,
+  nowIso,
+  addOptOut,
+  optedOutPhones,
+  recentlyTextedIds,
+  sentInLast24h,
+} from "./db";
 import { createTwilioSender, SmsSender } from "./sms";
 import { getRecentCustomers, QbCustomer } from "./quickbooks";
 import { normalizePhone } from "./phone";
@@ -66,17 +75,29 @@ function jitterMs(): number {
   return lo + Math.floor(Math.random() * (hi - lo + 1));
 }
 
-async function sendAlert(message: string): Promise<void> {
-  const url = process.env.ALERT_WEBHOOK_URL;
-  if (!url) return;
+// Texts ALERT_PHONE (the admin, not a customer) when a run goes wrong.
+// Skips the alert when the previous run already failed, so a broken
+// QuickBooks connection texts once instead of every scheduled run.
+export async function sendAlert(
+  runId: string,
+  message: string,
+  senderFactory: () => Promise<SmsSender> = createTwilioSender,
+): Promise<void> {
+  const to = normalizePhone(process.env.ALERT_PHONE ?? "");
+  if (!to.ok) return;
+  const prev = getDb()
+    .prepare(
+      "SELECT status FROM runs WHERE id != ? AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+    )
+    .get(runId) as { status: string } | undefined;
+  if (prev?.status === "failed") return;
   try {
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: message }),
-    });
-  } catch {
+    const sender = await senderFactory();
+    await sender.send(to.tenDigit, `EasyReview alert: ${message}`);
+    await sender.close();
+  } catch (err) {
     // Never let alerting failure crash the run.
+    console.error("Failed to send alert text:", err);
   }
 }
 
@@ -93,18 +114,25 @@ async function recordAttempt(
   },
 ): Promise<void> {
   try {
-    await supabaseAdmin.from("message_attempts").insert({
-      run_id: runId,
-      qb_customer_id: data.qb_customer_id,
-      customer_name: data.customer_name,
-      phone: data.phone,
-      status: data.status,
-      provider: "twilio",
-      provider_message_id: data.provider_message_id ?? null,
-      error_code: data.error_code ?? null,
-      error_message: data.error_message ?? null,
-      sent_at: data.status === "sent" ? new Date().toISOString() : null,
-    });
+    getDb()
+      .prepare(
+        `INSERT INTO message_attempts (id, run_id, qb_customer_id, customer_name, phone, status,
+           provider_message_id, error_code, error_message, sent_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        newId(),
+        runId,
+        data.qb_customer_id,
+        data.customer_name,
+        data.phone,
+        data.status,
+        data.provider_message_id ?? null,
+        data.error_code ?? null,
+        data.error_message ?? null,
+        data.status === "sent" ? nowIso() : null,
+        nowIso(),
+      );
   } catch (err) {
     console.error("Failed to record message attempt:", err);
   }
@@ -112,29 +140,30 @@ async function recordAttempt(
 
 // Create a run row and return its id.
 // Throws an error with code "ACTIVE_RUN" if a run is already in progress.
-// The DB partial unique index (002_production_fixes.sql) makes this atomic —
-// a concurrent request that passes a hasActiveRun() pre-check will still fail
-// here rather than creating a duplicate active run.
+// The at_most_one_active_run partial unique index (lib/db.ts) makes this
+// atomic: a second concurrent run fails here instead of running twice.
 export async function createRun(
   source: "manual" | "cron" = "manual",
 ): Promise<string> {
-  const { data, error } = await supabaseAdmin
-    .from("runs")
-    .insert({ status: "running", source })
-    .select("id")
-    .single();
-
-  if (error) {
-    // PostgreSQL unique_violation = '23505' — at_most_one_active_run index fired.
-    if ((error as { code?: string }).code === "23505") {
+  const id = newId();
+  try {
+    getDb()
+      .prepare(
+        "INSERT INTO runs (id, status, source, started_at) VALUES (?, 'running', ?, ?)",
+      )
+      .run(id, source, nowIso());
+  } catch (err) {
+    // 2067 = SQLITE_CONSTRAINT_UNIQUE from the active-run index.
+    if ((err as { errcode?: number }).errcode === 2067) {
       throw Object.assign(new Error("A run is already in progress."), {
         code: "ACTIVE_RUN",
       });
     }
-    throw new Error(`Failed to create run: ${error.message}`);
+    throw new Error(
+      `Failed to create run: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  if (!data) throw new Error("Failed to create run: no data returned");
-  return data.id as string;
+  return id;
 }
 
 async function updateRun(
@@ -153,45 +182,74 @@ async function updateRun(
     >
   >,
 ): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("runs")
-    .update(patch)
-    .eq("id", runId);
-  if (error) console.error("Failed to update run:", error.message);
+  const entries = Object.entries(patch).map(
+    ([k, v]) => [k, k === "results" ? JSON.stringify(v) : v] as const,
+  );
+  if (entries.length === 0) return;
+  try {
+    // Column names come from the typed patch keys above, never from user input.
+    getDb()
+      .prepare(
+        `UPDATE runs SET ${entries.map(([k]) => `${k} = ?`).join(", ")} WHERE id = ?`,
+      )
+      .run(...entries.map(([, v]) => v as string | number | null), runId);
+  } catch (err) {
+    console.error("Failed to update run:", err);
+  }
 }
 
 export async function hasActiveRun(): Promise<boolean> {
-  const { data } = await supabaseAdmin
-    .from("runs")
-    .select("id")
-    .eq("status", "running")
-    .limit(1);
-  return !!(data && data.length > 0);
+  return !!getDb()
+    .prepare("SELECT 1 FROM runs WHERE status = 'running' LIMIT 1")
+    .get();
 }
 
 // Mark runs stuck in 'running' for more than 15 minutes as failed.
 // Call before createRun() so stuck runs don't block new ones via the DB constraint.
-export async function cleanStuckRuns(): Promise<void> {
-  const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-  const { error } = await supabaseAdmin
-    .from("runs")
-    .update({
-      status: "failed",
-      error: "Run timed out — cleaned up automatically on next trigger",
-      finished_at: new Date().toISOString(),
-    })
-    .eq("status", "running")
-    .lt("started_at", cutoff);
-  if (error) console.error("cleanStuckRuns failed:", error.message);
+// Pass olderThanMs = 0 at server startup: a fresh process means nothing is running.
+export async function cleanStuckRuns(
+  olderThanMs = 15 * 60 * 1000,
+): Promise<void> {
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  getDb()
+    .prepare(
+      `UPDATE runs SET status = 'failed', error = ?, finished_at = ?
+       WHERE status = 'running' AND started_at <= ?`,
+    )
+    .run(
+      "Run was interrupted (timeout or server restart). Cleaned up automatically.",
+      nowIso(),
+      cutoff,
+    );
 }
 
 export async function checkAutomationEnabled(): Promise<boolean> {
-  const { data } = await supabaseAdmin
-    .from("settings")
-    .select("value")
-    .eq("key", "automation_enabled")
-    .maybeSingle();
-  return data?.value !== "false";
+  return getSetting("automation_enabled") !== "false";
+}
+
+// Insert or update the customer row. Only the columns in `patch` change on
+// update, so a failed send never clears an earlier texted_at.
+function upsertCustomer(
+  c: QbCustomer,
+  patch: {
+    texted_at?: string;
+    next_eligible_at?: string | null;
+    last_status: string;
+    last_error: string | null;
+  },
+): void {
+  const now = nowIso();
+  const fields = { ...patch, last_attempt_at: now };
+  const cols = Object.keys(fields);
+  const vals = Object.values(fields);
+  getDb()
+    .prepare(
+      `INSERT INTO customers (id, qb_customer_id, name, phone, created_at, ${cols.join(", ")})
+       VALUES (?, ?, ?, ?, ?, ${cols.map(() => "?").join(", ")})
+       ON CONFLICT(qb_customer_id) DO UPDATE SET name = excluded.name, phone = excluded.phone,
+         ${cols.map((k) => `${k} = excluded.${k}`).join(", ")}`,
+    )
+    .run(newId(), c.qb_customer_id, c.name, c.phone, now, ...vals);
 }
 
 export interface RunOptions {
@@ -203,14 +261,17 @@ export interface RunOptions {
   sleep?: (ms: number) => Promise<void>;
   isAutomationEnabled?: () => Promise<boolean>;
   fetchTemplate?: () => Promise<string>;
+  retextDays?: number;
 }
 
 export async function processBatch(
   runId: string,
   opts: RunOptions = {},
 ): Promise<void> {
-  const dailyCap = opts.dailyCap ?? DAILY_CAP;
+  // Rolling 24h cap, shared by every run that day.
+  const dailyCap = Math.max(0, (opts.dailyCap ?? DAILY_CAP) - sentInLast24h());
   const daysBack = opts.daysBack ?? DAYS_BACK;
+  const retextDays = opts.retextDays ?? RETEXT_DAYS;
   const fetchCustomers = opts.fetchCustomers ?? getRecentCustomers;
   const senderFactory = opts.senderFactory ?? createTwilioSender;
   const sleep =
@@ -252,22 +313,8 @@ export async function processBatch(
     }
 
     // Dedupe: skip customers who have been texted and are not yet re-eligible.
-    const ids = customers.map((c) => c.qb_customer_id);
-    const { data: existing } = await supabaseAdmin
-      .from("customers")
-      .select("qb_customer_id, texted_at, next_eligible_at")
-      .in("qb_customer_id", ids);
-
-    const now = new Date();
-    const alreadyTexted = new Set(
-      (existing ?? [])
-        .filter((r) => {
-          if (!r.texted_at) return false;
-          if (r.next_eligible_at && new Date(r.next_eligible_at) <= now)
-            return false;
-          return true;
-        })
-        .map((r) => r.qb_customer_id),
+    const alreadyTexted = recentlyTextedIds(
+      customers.map((c) => c.qb_customer_id),
     );
 
     type Planned = {
@@ -297,14 +344,7 @@ export async function processBatch(
       .filter((p) => !p.skipReason)
       .map((p) => p.tenDigit!);
 
-    const optedOut = new Set<string>();
-    if (validPhones.length > 0) {
-      const { data: optOuts } = await supabaseAdmin
-        .from("opt_outs")
-        .select("phone")
-        .in("phone", validPhones);
-      (optOuts ?? []).forEach((r) => optedOut.add(r.phone));
-    }
+    const optedOut = optedOutPhones(validPhones);
 
     for (const p of planned) {
       if (!p.skipReason && p.tenDigit && optedOut.has(p.tenDigit)) {
@@ -383,23 +423,18 @@ export async function processBatch(
         actuallySent++;
         sent++;
 
-        const nextEligibleAt = new Date(
-          Date.now() + RETEXT_DAYS * 24 * 60 * 60 * 1000,
-        ).toISOString();
+        // RETEXT_DAYS <= 0 means one text per customer, ever (NULL = never eligible again).
+        const nextEligibleAt =
+          retextDays > 0
+            ? new Date(Date.now() + retextDays * 86_400_000).toISOString()
+            : null;
 
-        await supabaseAdmin.from("customers").upsert(
-          {
-            qb_customer_id: p.customer.qb_customer_id,
-            name: p.customer.name,
-            phone: p.customer.phone,
-            texted_at: new Date().toISOString(),
-            next_eligible_at: nextEligibleAt,
-            last_status: "sent",
-            last_error: null,
-            last_attempt_at: new Date().toISOString(),
-          },
-          { onConflict: "qb_customer_id" },
-        );
+        upsertCustomer(p.customer, {
+          texted_at: nowIso(),
+          next_eligible_at: nextEligibleAt,
+          last_status: "sent",
+          last_error: null,
+        });
 
         attempts.push({
           name: p.customer.name,
@@ -424,25 +459,13 @@ export async function processBatch(
         // we skip before attempting next time instead of burning a send attempt.
         const twilioCode = (err as { code?: number }).code;
         if (twilioCode === 21610) {
-          await supabaseAdmin
-            .from("opt_outs")
-            .upsert(
-              { phone: p.tenDigit!, reason: "twilio_blocked" },
-              { onConflict: "phone" },
-            );
+          addOptOut(p.tenDigit!, "twilio_blocked");
         }
 
-        await supabaseAdmin.from("customers").upsert(
-          {
-            qb_customer_id: p.customer.qb_customer_id,
-            name: p.customer.name,
-            phone: p.customer.phone,
-            last_status: "error",
-            last_error: errMsg,
-            last_attempt_at: new Date().toISOString(),
-          },
-          { onConflict: "qb_customer_id" },
-        );
+        upsertCustomer(p.customer, {
+          last_status: "error",
+          last_error: errMsg,
+        });
 
         attempts.push({
           name: p.customer.name,
@@ -489,7 +512,8 @@ export async function processBatch(
 
     if (customers.length > 0 && sent === 0 && failed > 0) {
       await sendAlert(
-        `EasyReview: run completed with 0 sent and ${failed} failures. Check Vercel logs.`,
+        runId,
+        `run finished with 0 sent and ${failed} failed. Check the dashboard or logs\\app.log on the shop PC.`,
       );
     }
   } catch (err) {
@@ -504,7 +528,7 @@ export async function processBatch(
       error: errMsg,
       finished_at: new Date().toISOString(),
     });
-    await sendAlert(`EasyReview: run ${runId} failed — ${errMsg}`);
+    await sendAlert(runId, `run failed: ${errMsg}`);
   } finally {
     if (sender) {
       try {

@@ -3,6 +3,13 @@
 import { useState } from "react";
 import type { Settings } from "./types";
 
+// [9, 13, 17] -> "9am, 1pm, 5pm"
+function formatHours(hours: number[]): string {
+  return hours
+    .map((h) => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`)
+    .join(", ");
+}
+
 interface Props {
   settings: Settings;
   onSaved: () => void;
@@ -85,7 +92,7 @@ export function SetupSection({ settings, onSaved }: Props) {
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
             {settings.automationEnabled
-              ? `Daily cron runs at 10am ${settings.businessTimezone.replace("America/", "").replace("_", " ")} — quiet hours ${settings.quietHoursStart}–${settings.quietHoursEnd}`
+              ? `Checks QuickBooks at ${formatHours(settings.runHours)} (${settings.businessTimezone.replace("America/", "").replace("_", " ")} time). Quiet hours ${settings.quietHoursStart} to ${settings.quietHoursEnd}`
               : "No texts will be sent until you resume"}
           </div>
         </div>

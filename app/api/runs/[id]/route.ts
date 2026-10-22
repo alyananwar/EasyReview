@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -11,17 +11,10 @@ export async function GET(
 ) {
   const { id } = await ctx.params;
 
-  const { data, error } = await supabaseAdmin
-    .from("runs")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  if (!data) {
+  const row = getDb().prepare("SELECT * FROM runs WHERE id = ?").get(id) as
+    { results: string } | undefined;
+  if (!row) {
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
   }
-  return NextResponse.json(data);
+  return NextResponse.json({ ...row, results: JSON.parse(row.results) });
 }

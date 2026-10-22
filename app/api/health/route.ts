@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { getDb } from "@/lib/db";
 import { getStoredTokens } from "@/lib/quickbooks";
 import { isAuthenticated } from "@/lib/auth";
 
@@ -32,27 +32,24 @@ export async function GET(request: NextRequest) {
         !process.env.REVIEW_LINK.includes("YOUR_REVIEW_LINK"),
     },
     cron_secret: { ok: !!process.env.CRON_SECRET },
-    supabase: { ok: false },
+    database: { ok: false },
     quickbooks_connected: { ok: false },
     last_run: { ok: true },
   };
 
-  // Supabase connectivity
+  // Database opens and answers
   try {
-    const { error } = await supabaseAdmin
-      .from("settings")
-      .select("key")
-      .limit(1);
-    checks.supabase = { ok: !error, detail: error?.message };
+    getDb().prepare("SELECT 1").get();
+    checks.database = { ok: true };
   } catch (e) {
-    checks.supabase = {
+    checks.database = {
       ok: false,
       detail: e instanceof Error ? e.message : "unknown",
     };
   }
 
   // QuickBooks token presence
-  if (checks.supabase.ok) {
+  if (checks.database.ok) {
     try {
       const tokens = await getStoredTokens();
       checks.quickbooks_connected = {
@@ -68,15 +65,13 @@ export async function GET(request: NextRequest) {
   }
 
   // Last successful run recency (warn if >36h with no completed run)
-  if (checks.supabase.ok) {
+  if (checks.database.ok) {
     try {
-      const { data } = await supabaseAdmin
-        .from("runs")
-        .select("started_at, status")
-        .eq("status", "completed")
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const data = getDb()
+        .prepare(
+          "SELECT started_at FROM runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1",
+        )
+        .get() as { started_at: string } | undefined;
 
       if (!data) {
         checks.last_run = { ok: true, detail: "no runs yet" };

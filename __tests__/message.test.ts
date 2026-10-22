@@ -80,3 +80,27 @@ describe("validateTemplate", () => {
     expect(res).toEqual({ ok: true });
   });
 });
+
+describe("DEFAULT_TEMPLATE encoding", () => {
+  // One non-GSM-7 character (em dash, curly quote) switches the whole SMS to
+  // UCS-2: 70 chars per segment instead of 160, so 2-3x the Twilio cost.
+  test("uses only plain GSM-7 friendly ASCII", () => {
+    expect(DEFAULT_TEMPLATE).toMatch(/^[\x20-\x7E]+$/);
+  });
+});
+
+describe("renderMessage typography", () => {
+  test("swaps smart quotes and dashes typed into a custom template", () => {
+    const out = renderMessage(
+      "Hi {first_name} \u2014 we\u2019d love a \u201creview\u201d {review_link}",
+      {
+        firstName: "Pat",
+        businessName: "Shop",
+        reviewLink: "https://x.y",
+      },
+    );
+    expect(out).toBe(
+      'Hi Pat - we\'d love a "review" https://x.y Reply STOP to opt out.',
+    );
+  });
+});

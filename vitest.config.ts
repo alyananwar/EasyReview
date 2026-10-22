@@ -11,8 +11,7 @@ export default defineConfig({
       REVIEW_LINK: "https://maps.app.goo.gl/test-review-link",
       BUSINESS_NAME: "Test Shop",
       COOKIE_SECRET: "test-secret-abcdef1234567890abcdef12345678",
-      NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
-      SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+      DB_PATH: ":memory:",
     },
   },
   resolve: {

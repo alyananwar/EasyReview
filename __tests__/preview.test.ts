@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { resetDb, seedCustomer, seedOptOut } from "./db-helpers";
 
 // Mock batch.ts to avoid the REVIEW_LINK startup check
 vi.mock("../lib/batch", () => ({
@@ -6,7 +7,7 @@ vi.mock("../lib/batch", () => ({
     `Hi ${name}! Review link here. Reply STOP to opt out.`,
 }));
 
-// getMessageTemplate hits Supabase — return the default template instead.
+// Pin the message template to the default.
 vi.mock("../lib/message", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/message")>();
   return {
@@ -15,67 +16,8 @@ vi.mock("../lib/message", async (importOriginal) => {
   };
 });
 
-const fixtures = vi.hoisted(() => {
-  interface CustomerRow {
-    qb_customer_id: string;
-    texted_at: string | null;
-    next_eligible_at: string | null;
-  }
-  interface OptOutRow {
-    phone: string;
-  }
-  const state: { customers: CustomerRow[]; opt_outs: OptOutRow[] } = {
-    customers: [],
-    opt_outs: [],
-  };
-
-  function buildChain(table: string) {
-    const filters: Array<(row: Record<string, unknown>) => boolean> = [];
-
-    function tableRef() {
-      if (table === "customers")
-        return state.customers as unknown as Record<string, unknown>[];
-      if (table === "opt_outs")
-        return state.opt_outs as unknown as Record<string, unknown>[];
-      return [] as Record<string, unknown>[];
-    }
-
-    const chain = {
-      select() {
-        return chain;
-      },
-      in(col: string, vals: unknown[]) {
-        filters.push((r) => vals.includes(r[col]));
-        return chain;
-      },
-      eq(col: string, val: unknown) {
-        filters.push((r) => r[col] === val);
-        return chain;
-      },
-      then(resolve: (v: { data: unknown; error: null }) => void) {
-        const rows = tableRef().filter((r) => filters.every((f) => f(r)));
-        resolve({ data: rows, error: null });
-      },
-    };
-    return chain;
-  }
-
-  const supabaseAdmin = { from: (table: string) => buildChain(table) };
-  return { state, supabaseAdmin };
-});
-
-vi.mock("../lib/supabase", () => ({
-  supabaseAdmin: fixtures.supabaseAdmin,
-  supabase: fixtures.supabaseAdmin,
-}));
-
 import { previewBatch } from "../lib/preview";
 import type { QbCustomer } from "../lib/quickbooks";
-
-function reset() {
-  fixtures.state.customers = [];
-  fixtures.state.opt_outs = [];
-}
 
 function makeCustomer(
   i: number,
@@ -90,7 +32,7 @@ function makeCustomer(
 }
 
 describe("previewBatch", () => {
-  beforeEach(reset);
+  beforeEach(resetDb);
 
   it("counts all customers as eligible when none have been texted", async () => {
     const result = await previewBatch({
@@ -102,11 +44,7 @@ describe("previewBatch", () => {
   });
 
   it("counts already-texted customers correctly", async () => {
-    fixtures.state.customers.push({
-      qb_customer_id: "qb-2",
-      texted_at: new Date().toISOString(),
-      next_eligible_at: null,
-    });
+    seedCustomer("qb-2", { texted_at: new Date().toISOString() });
     const result = await previewBatch({
       fetchCustomers: async () => [1, 2, 3].map((i) => makeCustomer(i)),
     });
@@ -116,8 +54,7 @@ describe("previewBatch", () => {
 
   it("counts re-eligible customers as eligible (next_eligible_at in the past)", async () => {
     const pastDate = new Date(Date.now() - 1000).toISOString();
-    fixtures.state.customers.push({
-      qb_customer_id: "qb-1",
+    seedCustomer("qb-1", {
       texted_at: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
       next_eligible_at: pastDate,
     });
@@ -129,7 +66,7 @@ describe("previewBatch", () => {
   });
 
   it("counts opted-out customers correctly", async () => {
-    fixtures.state.opt_outs.push({ phone: "2095551201" });
+    seedOptOut("2095551201");
     const result = await previewBatch({
       fetchCustomers: async () => [makeCustomer(1), makeCustomer(2)],
     });
@@ -172,7 +109,7 @@ describe("previewBatch", () => {
   });
 
   it("uses 'Customer' in sample message when no eligible customers", async () => {
-    fixtures.state.opt_outs.push({ phone: "2095551201" });
+    seedOptOut("2095551201");
     const result = await previewBatch({
       fetchCustomers: async () => [makeCustomer(1)],
     });

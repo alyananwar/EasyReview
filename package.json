@@ -8,10 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify": "node --env-file=.env.local --disable-warning=ExperimentalWarning scripts/verify-setup.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.102.1",
     "intuit-oauth": "^4.2.2",
     "next": "16.2.3",
     "react": "19.2.4",
@@ -20,15 +20,17 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/ui": "^4.1.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
-    "ts-node": "^10.9.2",
     "typescript": "^5",
     "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

@@ -47,7 +47,7 @@ export function PreviewModal({
           />
           {preview.over_cap > 0 && (
             <PreviewRow
-              label={`Over daily cap (${preview.daily_cap})`}
+              label={`Over 24h cap (${preview.daily_cap} left)`}
               value={preview.over_cap}
               color="text-yellow-400"
             />

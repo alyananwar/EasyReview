@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOAuthClient, saveTokens } from "@/lib/quickbooks";
-import { supabaseAdmin } from "@/lib/supabase";
+import { setSetting } from "@/lib/db";
 
 async function fetchCompanyName(
   accessToken: string,
@@ -51,20 +51,13 @@ export async function GET(request: NextRequest) {
     await saveTokens(tokenData);
 
     const realmId = oauthClient.getToken().realmId;
-    await supabaseAdmin
-      .from("settings")
-      .upsert({ key: "qb_realm_id", value: realmId }, { onConflict: "key" });
+    setSetting("qb_realm_id", realmId);
 
     try {
       const accessToken = oauthClient.getToken().access_token as string;
       const companyName = await fetchCompanyName(accessToken, realmId);
       if (companyName) {
-        await supabaseAdmin
-          .from("settings")
-          .upsert(
-            { key: "qb_company_name", value: companyName },
-            { onConflict: "key" },
-          );
+        setSetting("qb_company_name", companyName);
       }
     } catch {
       // Company name is cosmetic — don't fail OAuth if fetch fails
