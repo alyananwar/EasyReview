@@ -195,4 +195,12 @@ describe("login", () => {
     vi.stubEnv("DASHBOARD_PASSWORD", "");
     expect((await attempt("anything", "10.0.0.4")).status).toBe(500);
   });
+
+  it("caps total failures so rotating X-Forwarded-For can't dodge the limit", async () => {
+    // 5 failures already recorded above; 15 more from fresh IPs hits the global cap of 20.
+    for (let i = 0; i < 15; i++) {
+      expect((await attempt("wrong", `10.1.0.${i}`)).status).toBe(401);
+    }
+    expect((await attempt("correct horse", "10.2.0.1")).status).toBe(429);
+  });
 });
