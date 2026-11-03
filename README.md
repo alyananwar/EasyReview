@@ -1,5 +1,9 @@
 # EasyReview
 
+<p align="center">
+  <img src="docs/demo.gif" alt="EasyReview dashboard with demo data: setup status, message template, runs, customers, and opt-outs" width="800">
+</p>
+
 SMS review automation for local businesses. EasyReview pulls recent customers from QuickBooks Online and texts each one a review request through Twilio, once, with opt-out handling and a daily cap. A dashboard shows every run, every message, and lets the shop pause automation or edit the message copy.
 
 **The pitch:** you close a work order in QuickBooks, and your customer gets a review text the same day. No new software to learn.
@@ -51,12 +55,12 @@ Checks every env var, that the QuickBooks redirect URI matches `PUBLIC_URL`, and
 
 ## Commands
 
-| Command         | What it does                 |
-| --------------- | ---------------------------- |
-| `npm run dev`   | Dev server at localhost:3000 |
-| `npm run build` | Production build             |
-| `npm test`      | Run the Vitest suite         |
-| `npm run lint`  | ESLint                       |
+| Command          | What it does                              |
+| ---------------- | ----------------------------------------- |
+| `npm run dev`    | Dev server at localhost:3000              |
+| `npm run build`  | Production build                          |
+| `npm test`       | Run the Vitest suite                      |
+| `npm run lint`   | ESLint                                    |
 | `npm run verify` | Check `.env.local` and Twilio credentials |
 
 ## Project layout
@@ -116,9 +120,9 @@ External approvals to start early (they take weeks, not hours):
 
 ## Docs
 
-| Doc                            | Contents                                                     |
-| ------------------------------ | ------------------------------------------------------------ |
-| `docs/SHOP_PC_SETUP.md`        | Shop PC install, SSH, Tailscale, day-to-day commands         |
-| `docs/SETUP_ACCOUNTS.md`       | Twilio, A2P 10DLC, and Intuit production app setup           |
-| `docs/PRICING.md`              | Pricing strategy ($49/mo Solo) and unit economics            |
+| Doc                                                               | Contents                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------ |
+| `docs/SHOP_PC_SETUP.md`                                           | Shop PC install, SSH, Tailscale, day-to-day commands   |
+| `docs/SETUP_ACCOUNTS.md`                                          | Twilio, A2P 10DLC, and Intuit production app setup     |
+| `docs/PRICING.md`                                                 | Pricing strategy ($49/mo Solo) and unit economics      |
 | `docs/CONTEXT.md`, `docs/PLAN.md`, `docs/INNGEST_ARCHITECTURE.md` | Older Vercel + Supabase design notes, kept for history |
