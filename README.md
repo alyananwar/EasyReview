@@ -1,5 +1,7 @@
 # EasyReview
 
+**Texts a shop's QuickBooks customers a review link after their visit, once each, with opt-outs handled. Runs on the shop's own PC.**
+
 <p align="center">
   <img src="docs/demo.gif" alt="EasyReview dashboard with demo data: setup status, message template, runs, customers, and opt-outs" width="800">
 </p>
