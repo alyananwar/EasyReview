@@ -75,7 +75,13 @@ if (-not (Test-Path $PROFILE.CurrentUserAllHosts) -or
     Add-Content -Path $PROFILE.CurrentUserAllHosts -Value $line
 }
 # Let the profile and the EasyReview scripts run for this user.
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+# The policy still gets saved when this "overridden by a more specific scope" error fires
+# (the caller runs with -ExecutionPolicy Bypass), so ignore only that error.
+try {
+    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+} catch {
+    if ($_.FullyQualifiedErrorId -notlike "ExecutionPolicyOverride*") { throw }
+}
 
 Write-Host "==> EasyReview startup task (runs as $user, logged in or not)"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
