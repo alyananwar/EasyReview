@@ -87,7 +87,7 @@ git --version
 
 ### Step 2: Join the tailnet
 
-Sign in to Tailscale from the tray icon with **the same account as your Mac**. Then, on [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines):
+Sign in to Tailscale from the tray icon with **the same account as your Mac**. Then turn on **Run unattended** (tray icon, Preferences). Without it, Tailscale disconnects as soon as you sign out of this Windows account, and SSH, Funnel and the dashboard all go down. Then, on [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines):
 
 1. Rename the PC to `lockeford-pc` (three-dot menu, Edit machine name).
 2. Click **Disable key expiry** on it. Otherwise the PC drops off your tailnet after 180 days, and you lose remote access until someone signs in at the shop again.
