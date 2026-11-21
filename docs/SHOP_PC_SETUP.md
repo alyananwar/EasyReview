@@ -57,15 +57,9 @@ git push origin main
 
 ## At the shop (on the Windows PC)
 
-Sign in to an **administrator** account on the PC. Your own local admin account is best, so the app doesn't depend on the shop's login. To make one, from the shop's admin login (PowerShell as Administrator):
+Sign in to the shop's normal Windows account. Everything (the app, its startup task, SSH) lives under that account, so it has to be an **administrator**. Run `whoami` and write down the user name after the backslash. That's your SSH user.
 
-```powershell
-$pw = Read-Host -AsSecureString "Password"
-New-LocalUser -Name easyreview -Password $pw -PasswordNeverExpires
-Add-LocalGroupMember -Group Administrators -Member easyreview
-```
-
-Sign out, sign in as `easyreview`, and do everything below from that account. Run `whoami` and write down the user name after the backslash. That's your SSH user.
+The USB kit (`scripts/windows/usb/`, double-click `1-setup.cmd`) does steps 1 to 5 for you and prints the SSH user at the end.
 
 ### Step 1: Install tools
 
