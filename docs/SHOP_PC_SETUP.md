@@ -45,7 +45,7 @@ openssl rand -hex 32
 
 One is `COOKIE_SECRET` and the other is `CRON_SECRET`. Pick a strong `DASHBOARD_PASSWORD` too.
 
-**4. Fill in `.env.local` on the Mac.** Start from `.env.example`. You'll fill in `PUBLIC_URL` and `QUICKBOOKS_REDIRECT_URI` at the shop once you know the PC's Tailscale name. Don't email this file. You'll copy it over SSH.
+**4. Fill in `.env.shop` on the Mac** (repo root, git-ignored, same format as `.env.example`). It becomes `C:\EasyReview\.env.local` on the PC. `PUBLIC_URL` is `https://lockeford-pc.<tailnet>.ts.net`, and your tailnet name shows on [login.tailscale.com/admin/dns](https://login.tailscale.com/admin/dns) once the Mac is signed in, so you can fill it and `QUICKBOOKS_REDIRECT_URI` (`PUBLIC_URL` + `/api/auth/quickbooks/callback`) before the visit. Add that redirect URI to the Intuit app too. Don't email this file. You'll copy it over SSH.
 
 **5. Push your latest code** (Mac Terminal, in the repo). The shop PC pulls from GitHub.
 
@@ -57,7 +57,15 @@ git push origin main
 
 ## At the shop (on the Windows PC)
 
-Sign in to an **administrator** account on the PC. Your own local admin account is best, so the app doesn't depend on the shop's login. Run `whoami` and write down the user name after the backslash. That's your SSH user.
+Sign in to an **administrator** account on the PC. Your own local admin account is best, so the app doesn't depend on the shop's login. To make one, from the shop's admin login (PowerShell as Administrator):
+
+```powershell
+$pw = Read-Host -AsSecureString "Password"
+New-LocalUser -Name easyreview -Password $pw -PasswordNeverExpires
+Add-LocalGroupMember -Group Administrators -Member easyreview
+```
+
+Sign out, sign in as `easyreview`, and do everything below from that account. Run `whoami` and write down the user name after the backslash. That's your SSH user.
 
 ### Step 1: Install tools
 
@@ -137,7 +145,7 @@ Then (Mac Terminal, in the repo folder):
 
 ```bash
 ssh shop-pc "hostname"                                # should print the PC's name, no password prompt
-scp .env.local shop-pc:C:/EasyReview/.env.local       # copy your secrets over the encrypted link
+scp .env.shop shop-pc:C:/EasyReview/.env.local        # copy your secrets over the encrypted link
 ssh shop-pc "cd C:\EasyReview; npm run verify"        # checks keys, URLs, Twilio
 ssh shop-pc deploy -RestartOnly                       # restart with the new .env.local
 ```
@@ -176,16 +184,16 @@ To give the shop a "Run Now" button, make a desktop shortcut on the PC to `https
 
 ## Day to day (from your Mac)
 
-| Task                    | Command (Mac Terminal)                                                                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ship new code           | `git push`, then `ssh shop-pc deploy`                                                                                                       |
-| Roll back               | `ssh shop-pc deploy -Ref <commit>` (deploy prints the previous commit if a build fails)                                                     |
-| Watch logs              | `ssh shop-pc "Get-Content C:\EasyReview\logs\app.log -Tail 50 -Wait"`                                                                       |
-| Health check            | `ssh shop-pc "curl.exe -s -H 'Authorization: Bearer <CRON_SECRET>' http://127.0.0.1:3000/api/health"`                                       |
-| Trigger a run now       | `ssh shop-pc "curl.exe -s -H 'Authorization: Bearer <CRON_SECRET>' http://127.0.0.1:3000/api/cron"`                                         |
-| Is the service running? | `ssh shop-pc "Get-ScheduledTask EasyReview \| Select State"`                                                                                |
-| Change `.env.local` | Edit it on the Mac, `scp .env.local shop-pc:C:/EasyReview/.env.local`, then `ssh shop-pc deploy -RestartOnly` |
-| Dashboard               | `https://lockeford-pc.tail1234.ts.net`                                                                                                      |
+| Task                    | Command (Mac Terminal)                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Ship new code           | `git push`, then `ssh shop-pc deploy`                                                                         |
+| Roll back               | `ssh shop-pc deploy -Ref <commit>` (deploy prints the previous commit if a build fails)                       |
+| Watch logs              | `ssh shop-pc "Get-Content C:\EasyReview\logs\app.log -Tail 50 -Wait"`                                         |
+| Health check            | `ssh shop-pc "curl.exe -s -H 'Authorization: Bearer <CRON_SECRET>' http://127.0.0.1:3000/api/health"`         |
+| Trigger a run now       | `ssh shop-pc "curl.exe -s -H 'Authorization: Bearer <CRON_SECRET>' http://127.0.0.1:3000/api/cron"`           |
+| Is the service running? | `ssh shop-pc "Get-ScheduledTask EasyReview \| Select State"`                                                  |
+| Change `.env.local`     | Edit `.env.shop` on the Mac, `scp .env.shop shop-pc:C:/EasyReview/.env.local`, then `ssh shop-pc deploy -RestartOnly` |
+| Dashboard               | `https://lockeford-pc.tail1234.ts.net`                                                                        |
 
 `deploy` waits for an in-progress run to finish before it restarts anything.
 
