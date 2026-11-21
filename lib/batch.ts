@@ -22,7 +22,9 @@ const MAX_DELAY_MS = parseInt(process.env.MAX_DELAY_MS || "3000", 10);
 const RETEXT_DAYS = parseInt(process.env.RETEXT_DAYS || "90", 10);
 
 // Fail hard at startup if the review link is missing or still a placeholder.
-if (!REVIEW_LINK || REVIEW_LINK.includes("YOUR_REVIEW_LINK")) {
+// Skipped during `next build`: the shop PC builds before .env.local is copied over.
+const IS_BUILD = process.env.NEXT_PHASE === "phase-production-build";
+if (!IS_BUILD && (!REVIEW_LINK || REVIEW_LINK.includes("YOUR_REVIEW_LINK"))) {
   throw new Error(
     "REVIEW_LINK env var is missing or still set to the placeholder. Set it to the real review URL before deploying.",
   );
